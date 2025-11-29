@@ -1,5 +1,3 @@
-*14*:55
-
 New update at the manual:
 > *This is Software Revision 02. We have improved the security of the*
 	*lock by  removing a conditional  flag that could  accidentally get*
@@ -15,3 +13,6 @@ Enter a 16 character gibberish and then the address of the `unlock_door` functio
 ```
 >>> 414141414141414141414141414141414644
 ```
+
+### Time taken:
+1.5 hours with hint
