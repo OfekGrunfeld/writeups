@@ -56,6 +56,9 @@ fd@ubuntu:~$ ./fd 4660
 >>> LETMEWIN
 <<< good job :)
 <<< Mama! Now_I_understand_what_file_descriptors_are!
-fd@ubuntu:~$ 
-
+```
+:D
+# Flag
+```
+Mama! Now_I_understand_what_file_descriptors_are!
 ```
