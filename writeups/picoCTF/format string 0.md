@@ -1,6 +1,7 @@
 # Description
-Can you use your knowledge of format strings to make the customers happy? Download the binary [here](https://artifacts.picoctf.net/c_mimas/67/format-string-0). Download the source [here](https://artifacts.picoctf.net/c_mimas/67/format-string-0.c).  
-
+```
+Can you use your knowledge of format strings to make the customers happy?
+```
 ---
 We are given the source code and program `format-string-0`.
 The function which prints the flag is the `sigsegv_handler`, meaning we just need to create a segfault.
